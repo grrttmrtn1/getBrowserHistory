@@ -19,6 +19,17 @@ param
 $chrome = "C:\Users\$username\AppData\Local\Google\Chrome\User Data\Default\History"
 $edge ="C:\Users\$username\AppData\Local\Microsoft\Edge\User Data\Default\History"
 
+function checkExists($variable) 
+{
+    if ($variable)
+    {
+        return $variable
+    }
+    else
+    {
+        return "null"
+    }
+}
 
 #load sqlite DLL
 function loadDLL()
@@ -39,24 +50,27 @@ function getChromiumHistory($browser)
     Copy-Item -Path $browser -Destination $cpFile
     if (Test-Path $cpFile)
     {
-
+        $history = @()
         $con = New-Object -TypeName System.Data.SQLite.SQLiteConnection
         $con.ConnectionString = "Data Source=$cpFile"
         $con.Open()
         $sql = $con.CreateCommand()
         if ([string]::IsNullOrEmpty($search))
         {
-            $sql.CommandText = "select * from urls;"
+            $query = "select * from urls;"
+            $sql.CommandText = $query
         }
         else 
         {
             if ($googleSearches) 
             {
-                $sql.CommandText = "select * from urls where url like '%google%';"
+                $query = "select * from urls where url like '%google%';"
+                $sql.CommandText = $query
             }
             else 
             {
-                $sql.CommandText = "select * from urls where url like '%$search%';"
+                $query = "select * from urls where url like '%$search%';"
+                $sql.CommandText = $query
             }
         }
         $adapter = New-Object -TypeName System.Data.SQLite.SQLiteDataAdapter $sql
@@ -67,16 +81,28 @@ function getChromiumHistory($browser)
             Add-Type -AssemblyName System.Web
             $redirects = $data.Tables[0] | where { $_.url -like '*google.com/url?sa*'}
             $searches = $data.Tables[0] | where { $_.url -like '*google.com/search*'}
-            foreach ($item in $searches) 
+            foreach ($row in $searches) 
             {
-                $dateTime = (([System.DateTimeOffset]::FromUnixTimeSeconds(($item.last_visit_time/1000000 - 11644473600))).DateTime).ToString()
-                Write-Host "$($item.title) - $($item.url) - $dateTime"
+                $item = New-Object PSObject -Property @{
+                Date = checkExists((([System.DateTimeOffset]::FromUnixTimeSeconds(($row.last_visit_time/1000000 - 11644473600))).DateTime).ToString()) 
+                Title = checkExists($row.title)
+                Url = checkExists($row.url) 
+                }
+                $history += $item
+                $dateTime = (([System.DateTimeOffset]::FromUnixTimeSeconds(($row.last_visit_time/1000000 - 11644473600))).DateTime).ToString()
+                Write-Host "$($row.title) - $($row.url) - $dateTime"
             }
             Write-Host "`n`n===========The Following URLs are referred from Google==========="
-            foreach ($item in $redirects)
+            foreach ($row in $redirects)
             {
-                $dateTime = (([System.DateTimeOffset]::FromUnixTimeSeconds(($item.last_visit_time/1000000 - 11644473600))).DateTime).ToString()
-                $url = [System.Web.HttpUtility]::UrlDecode(($item.url -split '&url=')[1])
+                $dateTime = (([System.DateTimeOffset]::FromUnixTimeSeconds(($row.last_visit_time/1000000 - 11644473600))).DateTime).ToString()
+                $url = [System.Web.HttpUtility]::UrlDecode(($row.url -split '&url=')[1])
+                $item = New-Object PSObject -Property @{
+                Date = checkExists((([System.DateTimeOffset]::FromUnixTimeSeconds(($row.last_visit_time/1000000 - 11644473600))).DateTime).ToString()) 
+                Title = checkExists($row.title)
+                Url = checkExists($url) 
+                }
+                $history += $item
                 Write-Host "$($item.title) - $url - $dateTime"
             }
         }
@@ -84,28 +110,42 @@ function getChromiumHistory($browser)
         {
             foreach ($row in $data.Tables[0])
             {
+                $item = New-Object PSObject -Property @{
+                Date = checkExists((([System.DateTimeOffset]::FromUnixTimeSeconds(($row.last_visit_time/1000000 - 11644473600))).DateTime).ToString()) 
+                Title = checkExists($row.title)
+                Url = checkExists($row.url) 
+                }
+                $history += $item
                 $dateTime = (([System.DateTimeOffset]::FromUnixTimeSeconds(($row.last_visit_time/1000000 - 11644473600))).DateTime).ToString()
                 write-host "$($row.title) - $($row.url)  - $dateTime"
             }
         }
         $con.Close()
+        $browser = $browser.split('\')[6]
+        $path = "C:\Temp\browserhistory\"
+        If(!(test-path $path))
+        {
+              New-Item -ItemType Directory -Force -Path $path
+        }
+        $history | Export-Csv -NoTypeInformation -Path "$path$($browser)_history.csv"
         $sql = $null
-
         $con = $null
         $adapter = $null
 	    [System.GC]::Collect()
 	    Remove-Item -Path $cpFile
+
     }
 }
 
 #legacy IE history
 function getIEHistory()
 {
+    $history = @()
     $shell = New-Object -ComObject Shell.Application            
-    $hist = $shell.NameSpace(“C:\Users\$username\AppData\Local\Microsoft\Windows\History”)            
-    $folder = $hist.Self            
+    $ie = $shell.NameSpace(“C:\Users\$username\AppData\Local\Microsoft\Windows\History”)            
+    $folder = $ie.Self            
             
-    $hist.Items() |             
+    $ie.Items() |             
     foreach {            
      if ($_.IsFolder) {            
        $siteFolder = $_.GetFolder            
@@ -121,13 +161,15 @@ function getIEHistory()
                    Site = $($site.Name)            
                    URL = $($pageFolder.GetDetailsOf($_,0))            
                    Date = $( $pageFolder.GetDetailsOf($_,2))            
-               }            
+               }
+               $history += $visit            
                write-host $visit            
             }            
          }            
        }            
      }            
 }
+    $history | Export-Csv -NoTypeInformation "C:\Temp\browserhistory\IE_history.csv"
 }
 
 try 
