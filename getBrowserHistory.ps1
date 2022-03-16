@@ -9,10 +9,12 @@ param
     [Parameter(HelpMessage="Options include All, IE, Edge, and Chrome. All will gather all 3")]
     [ValidateSet("All", "IE", "Edge", "Chrome")]
     $browser = 'All',
-    [Parameter(HelpMessage="Provide a date range for time you'd like to search. ex. 2/2/2022 3:15-2/2/2022 13:15. Please use UTC.")]
-    [datetime]$dateRange,
+    [Parameter(HelpMessage="Provide a start date and time for a range you'd like to search. ex. 2/2/2022 3:15. Please use UTC.")]
+    [Datetime]$startDate,
+    [Parameter(HelpMessage="Provide a end date and time for a range you'd like to search. ex.2/2/2022 13:15. Please use UTC.")]
+    [Datetime]$endDate,
     [Parameter(HelpMessage="Provide integer parameter for the number of hours from current time you'd like to search in history")]
-    [int]$lastHours
+    [int]$lastHours = 0
 )
 
 
@@ -43,6 +45,11 @@ function loadDLL()
     Add-Type -Path "C:\temp\System.Data.SQLite.dll"
 }
 
+function convertWebKitToUTC($time)
+{
+    return (([System.DateTimeOffset]::FromUnixTimeSeconds(($time/1000000 - 11644473600))).DateTime)
+}
+
 #utilized for both Chrome/Edge just need a different db
 function getChromiumHistory($browser)
 {
@@ -55,7 +62,7 @@ function getChromiumHistory($browser)
         $con.ConnectionString = "Data Source=$cpFile"
         $con.Open()
         $sql = $con.CreateCommand()
-        if ([string]::IsNullOrEmpty($search))
+        if ([string]::IsNullOrEmpty($search) -and !$googleSearches)
         {
             $query = "select * from urls;"
             $sql.CommandText = $query
@@ -69,8 +76,8 @@ function getChromiumHistory($browser)
             }
             else 
             {
-                $query = "select * from urls where url like '%$search%';"
-                $sql.CommandText = $query
+               $query = "select * from urls where url like '%$search%';"
+               $sql.CommandText = $query
             }
         }
         $adapter = New-Object -TypeName System.Data.SQLite.SQLiteDataAdapter $sql
@@ -78,46 +85,64 @@ function getChromiumHistory($browser)
         [void]$adapter.Fill($data)
         if ($googleSearches)
         {
+            $entries = $data.Tables[0]
+            if ($lastHours -gt 0)
+            {
+                write-host 'searching google last hours'
+                $entries = $entries | where {(convertWebKitToUTC($_.last_visit_time)) -GE ((Get-Date).AddHours(-$lastHours).ToUniversalTime())}
+            }
+            if (![string]::IsNullOrEmpty($endDate) -and ![string]::IsNullOrEmpty($startDate)) 
+            {
+                 write-host 'searching google last range'
+                #$startDate = [DateTime]::Parse($dateRange.split('-')[0])
+                #$endDate = [DateTime]::Parse($dateRange.split('-')[1])
+                $entries = $entries | where {((convertWebKitToUTC($_.last_visit_time)) -GE $startDate) -and ((convertWebKitToUTC($_.last_visit_time)) -le $endDate)}
+            }
             Add-Type -AssemblyName System.Web
-            $redirects = $data.Tables[0] | where { $_.url -like '*google.com/url?sa*'}
-            $searches = $data.Tables[0] | where { $_.url -like '*google.com/search*'}
+            $redirects = $entries | where { $_.url -like '*google.com/url?sa*'}
+            $searches = $entries | where { $_.url -like '*google.com/search*'}
             foreach ($row in $searches) 
             {
                 $item = New-Object PSObject -Property @{
-                Date = checkExists((([System.DateTimeOffset]::FromUnixTimeSeconds(($row.last_visit_time/1000000 - 11644473600))).DateTime).ToString()) 
+                Date = checkExists(convertWebKitToUTC($row.last_visit_time).ToString()) 
                 Title = checkExists($row.title)
                 Url = checkExists($row.url) 
                 }
                 $history += $item
-                $dateTime = (([System.DateTimeOffset]::FromUnixTimeSeconds(($row.last_visit_time/1000000 - 11644473600))).DateTime).ToString()
-                Write-Host "$($row.title) - $($row.url) - $dateTime"
             }
             Write-Host "`n`n===========The Following URLs are referred from Google==========="
             foreach ($row in $redirects)
             {
-                $dateTime = (([System.DateTimeOffset]::FromUnixTimeSeconds(($row.last_visit_time/1000000 - 11644473600))).DateTime).ToString()
                 $url = [System.Web.HttpUtility]::UrlDecode(($row.url -split '&url=')[1])
                 $item = New-Object PSObject -Property @{
-                Date = checkExists((([System.DateTimeOffset]::FromUnixTimeSeconds(($row.last_visit_time/1000000 - 11644473600))).DateTime).ToString()) 
+                Date = checkExists(convertWebKitToUTC($row.last_visit_time).ToString()) 
                 Title = checkExists($row.title)
                 Url = checkExists($url) 
                 }
                 $history += $item
-                Write-Host "$($item.title) - $url - $dateTime"
             }
         }
         else 
         {
-            foreach ($row in $data.Tables[0])
+            $entries = $data.Tables[0]
+            if ($lastHours -gt 0)
+            {
+                $entries = $entries | where {(convertWebKitToUTC($_.last_visit_time)) -GE ((Get-Date).AddHours(-$lastHours).ToUniversalTime())}
+            }
+            if (![string]::IsNullOrEmpty($endDate) -and ![string]::IsNullOrEmpty($startDate)) 
+            {
+                #$startDate = [DateTime]::Parse($dateRange.split('-')[0])
+                #$endDate = [DateTime]::Parse($dateRange.split('-')[1])
+                $entries = $entries | where {((convertWebKitToUTC($_.last_visit_time)) -GE $startDate) -and ((convertWebKitToUTC($_.last_visit_time)) -le $endDate)}
+            }
+            foreach ($row in $entries)
             {
                 $item = New-Object PSObject -Property @{
-                Date = checkExists((([System.DateTimeOffset]::FromUnixTimeSeconds(($row.last_visit_time/1000000 - 11644473600))).DateTime).ToString()) 
+                Date = checkExists(convertWebKitToUTC($row.last_visit_time).ToString()) 
                 Title = checkExists($row.title)
                 Url = checkExists($row.url) 
                 }
                 $history += $item
-                $dateTime = (([System.DateTimeOffset]::FromUnixTimeSeconds(($row.last_visit_time/1000000 - 11644473600))).DateTime).ToString()
-                write-host "$($row.title) - $($row.url)  - $dateTime"
             }
         }
         $con.Close()
@@ -162,8 +187,7 @@ function getIEHistory()
                    URL = $($pageFolder.GetDetailsOf($_,0))            
                    Date = $( $pageFolder.GetDetailsOf($_,2))            
                }
-               $history += $visit            
-               write-host $visit            
+               $history += $visit        
             }            
          }            
        }            
@@ -208,13 +232,22 @@ try
         }
 
     }
+    if (Test-Path "C:\Temp\browserhistory") 
+    {
+        if (Test-Path "c:\temp\browserhistory.zip")
+        {
+            Remove-Item "c:\temp\browserhistory.zip"
+        }
+        Compress-Archive "C:\Temp\browserhistory" -DestinationPath "C:\Temp\browserhistory.zip"
+    }
 
 
 }
 catch
 {
-    write-host "Error Message:  $($Error[0].Exception.Message)"
-    write-host "Error in Line: $($Error[0].InvocationInfo.Line)"
-    write-host "Error in Line Number: $($Error[0].InvocationInfo.ScriptLineNumber)"
-    write-host "Error Item Name: $($Error[0].Exception.ItemName)"
+    New-Item -Path "c:\temp\browserhistory" -Name "getBrowserHistoryLog.txt" -ItemType "file"
+    Add-Content -Path "c:\temp\browserhistory\getBrowserHistoryLog.txt" -Value "Error Message:  $($Error[0].Exception.Message)"
+    Add-Content -Path "c:\temp\browserhistory\getBrowserHistoryLog.txt" -Value "Error in Line: $($Error[0].InvocationInfo.Line)"
+    Add-Content -Path "c:\temp\browserhistory\getBrowserHistoryLog.txt" -Value "Error in Line Number: $($Error[0].InvocationInfo.ScriptLineNumber)"
+    Add-Content -Path "c:\temp\browserhistory\getBrowserHistoryLog.txt" -Value "Error Item Name: $($Error[0].Exception.ItemName)"
 }
