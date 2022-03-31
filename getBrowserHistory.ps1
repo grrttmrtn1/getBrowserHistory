@@ -14,13 +14,45 @@ param
     [Parameter(HelpMessage="Provide a end date and time for a range you'd like to search. ex.2/2/2022 13:15. Please use UTC.")]
     [Datetime]$endDate,
     [Parameter(HelpMessage="Provide integer parameter for the number of hours from current time you'd like to search in history")]
-    [int]$lastHours = 0
+    [int]$lastHours = 0,
+    [Parameter(HelpMessage="Provide path for result output. This will append a folder Browserhistory within the path provided")]
+    $outputPath = "c:\temp\"
 )
 
-
+#global variable for chromium browser history locations
 $chrome = "C:\Users\$username\AppData\Local\Google\Chrome\User Data\Default\History"
 $edge ="C:\Users\$username\AppData\Local\Microsoft\Edge\User Data\Default\History"
 
+Write-Host $username
+Write-Host $search
+Write-Host $googleSearches
+Write-Host $browser
+Write-Host $startDate
+Write-Host $endDate
+Write-Host $lastHours
+
+#check if output path was provided with \ as the last character before appending our folder name
+if ($outputPath.Substring($outputPath.Length - 1) -eq '\')
+{
+    $outputPath = "$($outputPath)browserhistory\"
+}
+else 
+{
+    "$($outputPath)\browserhistory\"
+}
+
+#clean up from previous runs
+if (Test-Path $outputPath)
+{
+    Remove-Item $outputPath
+
+}
+if (Test-Path "$outputPath.zip")
+{
+    Remove-Item "$outputPath.zip"
+}
+
+#function for use with psobject creation to check if value exists else set to null
 function checkExists($variable) 
 {
     if ($variable)
@@ -45,6 +77,8 @@ function loadDLL()
     Add-Type -Path "C:\temp\System.Data.SQLite.dll"
 }
 
+
+#convert chromium sqlite timestamp storage from webkit to utc time
 function convertWebKitToUTC($time)
 {
     return (([System.DateTimeOffset]::FromUnixTimeSeconds(($time/1000000 - 11644473600))).DateTime)
@@ -181,13 +215,31 @@ function getIEHistory()
          if ($site.IsFolder) {            
             $pageFolder  = $site.GetFolder            
             $pageFolder.Items() |             
-            foreach {            
+            foreach { 
                $visit = New-Object -TypeName PSObject -Property @{            
                    Site = $($site.Name)            
                    URL = $($pageFolder.GetDetailsOf($_,0))            
-                   Date = $( $pageFolder.GetDetailsOf($_,2))            
+                   Date = $( $pageFolder.GetDetailsOf($_,2))
+               }   
+               if ($lastHours -gt 0)
+               {
+                if (([Datetime]$visit.Date).ToUniversalTime() -GE ((Get-Date).AddHours(-$lastHours).ToUniversalTime()))
+                {
+                    $history += $visit  
+                }
                }
-               $history += $visit        
+               elseif (![string]::IsNullOrEmpty($endDate) -and ![string]::IsNullOrEmpty($startDate))
+               { 
+                if ((([Datetime]$visit.Date).ToUniversalTime() -GE $startDate) -and (([Datetime]$visit.Date).ToUniversalTime() -le $endDate))
+                {
+                    $history += $visit  
+                }   
+               
+               }
+               else 
+               {       
+                    $history += $visit      
+               }
             }            
          }            
        }            
